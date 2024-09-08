@@ -1,0 +1,49 @@
+#!/bin/bash
+#
+# This hook script detectes changes on the specified remote ref (track_ref) and
+# unlocks the own file locks that have already been pushed/merged to the remote branch.
+#
+set -eu
+
+# Remote ref to track
+# It is recommended to specify the default branch on remote repository.
+readonly track_ref='origin/main'
+
+function main {
+    local old_ref_key='tmp.lfs.auto-unlock.old-ref'
+
+    local full_track_ref="refs/remotes/${track_ref}"
+
+    # Note: old_value is always empty on updating remote refs
+    while read old_value new_value ref_name
+    do
+        if [ "${ref_name}" = "${full_track_ref}" ]
+        then
+            case "$1" in
+                'prepared')
+                    # Store the old_ref for later use
+                    git config --local --add "${old_ref_key}" "$(git rev-parse "${full_track_ref}")"
+                    ;;
+                'committed')
+                    unlock_committed_files "$(git config --local "${old_ref_key}")" "${new_value}"
+                    # Clean up the old_ref
+                    git config --local --unset "${old_ref_key}"
+                    ;;
+            esac
+        fi
+    done
+}
+
+function unlock_committed_files {
+    local old_ref="$1" new_ref="$2"
+    sort  <(fetch_locked_files) <(git diff --name-only "${old_ref}" "${new_ref}") \
+        | uniq --repeated \
+        | xargs --delimiter=$'\n' --max-args=1 --no-run-if-empty git lfs unlock
+}
+
+function fetch_locked_files {
+    git lfs locks --local \
+        | awk -v FS='\t' '{ print gensub(/ *$/, "", 1, $1) }'
+}
+
+main "$@"
