@@ -14,6 +14,8 @@ function main {
 
     local full_track_ref="refs/remotes/${track_ref}"
 
+    local committed_locked_files dirty_files
+
     # Note: old_value is always empty on updating remote refs
     while read old_value new_value ref_name
     do
@@ -25,25 +27,53 @@ function main {
                     git config --local --add "${old_ref_key}" "$(git rev-parse "${full_track_ref}")"
                     ;;
                 'committed')
-                    unlock_committed_files "$(git config --local "${old_ref_key}")" "${new_value}"
+                    old_value="$(git config --local "${old_ref_key}")"
                     # Clean up the old_ref
                     git config --local --unset "${old_ref_key}"
+
+                    committed_locked_files="$(fetch_committed_locked_files "${old_value}" "${new_value}")"
+                    dirty_files="$(fetch_dirty_files)"
+                    # unlock the committed files that aren't dirty
+                    sort <(echo "${committed_locked_files}") <(echo "${dirty_files}") <(echo "${dirty_files}") \
+                        | uniq --unique \
+                        | unlock_files
+                    # report dirty files that are locked and committed
+                    sort <(echo "${committed_locked_files}") <(echo "${dirty_files}") \
+                        | uniq --repeated \
+                        | report_dirty_files
                     ;;
             esac
         fi
     done
 }
 
-function unlock_committed_files {
+function fetch_committed_locked_files {
     local old_ref="$1" new_ref="$2"
     sort  <(fetch_locked_files) <(git diff --name-only "${old_ref}" "${new_ref}") \
-        | uniq --repeated \
-        | xargs --delimiter=$'\n' --max-args=1 --no-run-if-empty git lfs unlock
+        | uniq --repeated
 }
 
 function fetch_locked_files {
     git lfs locks --local \
         | awk -v FS='\t' '{ print gensub(/ *$/, "", 1, $1) }'
+}
+
+function fetch_dirty_files {
+    git status --porcelain=v1 \
+        | awk -v FS="\"" '{print $2}'
+}
+
+function unlock_files {
+    xargs --delimiter=$'\n' --max-args=1 --no-run-if-empty git lfs unlock
+}
+
+function report_dirty_files {
+    awk '
+        NR == 1 { 
+            print "*** Skip unlocking due to following files has uncommitted changes: ***"
+        }
+        { print " * "$0 }
+    '
 }
 
 main "$@"
