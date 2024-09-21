@@ -10,6 +10,8 @@ set -eu
 readonly track_ref='origin/main'
 
 function main {
+    local state="$1"
+
     local old_ref_key='tmp.lfs.auto-unlock.old-ref'
 
     local full_track_ref="refs/remotes/${track_ref}"
@@ -21,7 +23,7 @@ function main {
     do
         if [ "${ref_name}" = "${full_track_ref}" ]
         then
-            case "$1" in
+            case "${state}" in
                 'prepared')
                     # Store the old_ref for later use
                     git config --local --add "${old_ref_key}" "$(git rev-parse "${full_track_ref}")"
