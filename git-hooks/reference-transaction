@@ -5,32 +5,30 @@
 #
 set -eu
 
-# Remote ref to track
-# It is recommended to specify the default branch on remote repository.
-readonly track_ref='origin/main'
-
 function main {
-    local old_ref_key='tmp.lfs.auto-unlock.old-ref'
-
-    local full_track_ref="refs/remotes/${track_ref}"
-
-    local committed_locked_files dirty_files
+    local state="$1"
 
     # Note: old_value is always empty on updating remote refs
     while read old_value new_value ref_name
     do
-        if [ "${ref_name}" = "${full_track_ref}" ]
+        if [[ "${ref_name}" != refs/remotes/* ]];
         then
-            case "$1" in
-                'prepared')
-                    # Store the old_ref for later use
-                    git config --local --add "${old_ref_key}" "$(git rev-parse "${full_track_ref}")"
-                    ;;
-                'committed')
-                    old_value="$(git config --local "${old_ref_key}")"
-                    # Clean up the old_ref
-                    git config --local --unset "${old_ref_key}"
+            continue
+        fi
+        
+        local old_ref_key='tmp.lfs.auto-unlock.old-ref'
+        
+        case "${state}" in
+            'prepared')
+                # Store the old_ref for later use
+                store_tmp_value "${old_ref_key}" "$(git rev-parse "${ref_name}")"
+                ;;
+            'committed')
+                old_value="$(pull_tmp_value "${old_ref_key}")"
 
+                if is_remote_default_branch "${ref_name}"
+                then
+                    local committed_locked_files dirty_files
                     committed_locked_files="$(fetch_committed_locked_files "${old_value}" "${new_value}")"
                     dirty_files="$(fetch_dirty_files)"
                     # unlock the committed files that aren't dirty
@@ -41,10 +39,36 @@ function main {
                     sort <(echo "${committed_locked_files}") <(echo "${dirty_files}") \
                         | uniq --repeated \
                         | report_dirty_files
-                    ;;
-            esac
-        fi
+                fi
+                ;;
+        esac
     done
+}
+
+function is_remote_default_branch {
+    local ref_name="$1"
+    # Extract remote name from ref_name
+    local remote_name
+    remote_name="$(awk -F / '{print $3}' <<< "${ref_name}")"
+    # fetch remote default branch
+    # see also: https://stackoverflow.com/questions/28666357/how-to-get-default-git-branch/44750379#44750379
+    if git remote set-head --auto "${remote_name}" &> /dev/null
+    then
+        test "${ref_name}" = "$(git rev-parse --symbolic-full-name "${remote_name}/HEAD")"
+    else
+        false
+    fi
+}
+
+function store_tmp_value {
+    local key="$1" value="$2"
+    git config --local --add "${key}" "${value}"
+}
+
+function pull_tmp_value {
+    local key="$1"
+    git config --local "${key}"
+    git config --local --unset-all "${key}"
 }
 
 function fetch_committed_locked_files {
