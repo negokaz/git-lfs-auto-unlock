@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 #
 # This hook script detectes changes on the specified remote ref (track_ref) and
 # unlocks the own file locks that have already been pushed/merged to the remote branch.
